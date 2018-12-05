@@ -252,8 +252,9 @@ module.exports.warmUp = async () => {
     };
 
     try {
+      const time = process.hrtime()
       const data = await lambda.invoke(params).promise();
-      console.log(\`Warm Up Invoke Success: \${functionName}\`, data);
+      console.log(\`Warm Up Invoke Success: \${functionName} for \${process.hrtime(time)} hrtime\`, data);
       return true;
     } catch (e) {
       console.log(\`Warm Up Invoke Error: \${functionName}\`, e);

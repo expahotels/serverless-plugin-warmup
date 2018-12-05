@@ -1,6 +1,6 @@
 {
   "name": "@expa-hotels/serverless-plugin-warmup",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "description": "Warms Lambdas",
   "main": "src/index.js",
   "author": "Tyler Kellogg rewrite of Gonçalo Neves",
