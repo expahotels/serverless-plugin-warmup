@@ -1,20 +1,20 @@
-'use strict'
+"use strict";
 
 /**
  * @module serverless-plugin-warmup
  *
- * @see {@link https://serverless.com/framework/docs/providers/aws/guide/plugins/}
- *
- * @requires 'bluebird'
- * @requires 'fs-extra'
+ * @requires 'fs'
  * @requires 'path'
+ * @requires 'util'
  * */
-const BbPromise = require('bluebird')
-const fs = BbPromise.promisifyAll(require('fs-extra'))
-const path = require('path')
+const fs = require("fs");
+const path = require("path");
+const util = require("util");
+
+const writeFile = util.promisify(fs.writeFile);
 
 /**
- * @classdesc Keep your lambdas warm during Winter
+ * @classdesc Warms Lambdas
  * @class WarmUP
  * */
 class WarmUP {
@@ -25,55 +25,39 @@ class WarmUP {
    * @param {!Object} serverless - Serverless object
    * @param {!Object} options - Serverless options
    * */
-  constructor (serverless, options) {
-    /** Serverless variables */
-    this.serverless = serverless
-    this.options = options
+  constructor(serverless, options) {
+    this.serverless = serverless;
+    this.options = options;
 
-    this.provider = this.serverless.getProvider('aws')
+    this.provider = this.serverless.getProvider("aws");
 
     this.hooks = {
-      'after:package:initialize': this.afterPackageInitialize.bind(this),
-      'after:package:createDeploymentArtifacts': this.afterCreateDeploymentArtifacts.bind(this),
-      'after:deploy:deploy': this.afterDeployFunctions.bind(this)
-    }
+      "after:package:initialize": this.afterPackageInitialize.bind(this),
+      "after:deploy:deploy": this.afterDeployFunctions.bind(this)
+    };
   }
 
   /**
    * @description After package initialize hook. Create warmer function and add it to the service.
-   *
-   * @fulfil {} — Warm up set
-   * @reject {Error} Warm up error
-   *
-   * @return {(boolean|Promise)}
    * */
-  afterPackageInitialize () {
-    // See https://github.com/serverless/serverless/issues/2631
-    this.options.stage = this.options.stage ||
+  afterPackageInitialize() {
+    this.options.stage =
+      this.options.stage ||
       this.serverless.service.provider.stage ||
-      (this.serverless.service.defaults && this.serverless.service.defaults.stage) ||
-      'dev'
-    this.options.region = this.options.region ||
+      (this.serverless.service.defaults &&
+        this.serverless.service.defaults.stage) ||
+      "dev";
+    this.options.region =
+      this.options.region ||
       this.serverless.service.provider.region ||
-      (this.serverless.service.defaults && this.serverless.service.defaults.region) ||
-      'us-east-1'
+      (this.serverless.service.defaults &&
+        this.serverless.service.defaults.region) ||
+      "us-west-2";
 
-    this.custom = this.serverless.service.custom
+    this.custom = this.serverless.service.custom;
 
-    this.configPlugin()
-    return this.createWarmer()
-  }
-
-  /**
-   * @description After create deployment artifacts. Clean prefix folder.
-   *
-   * @fulfil {} — Optimization finished
-   * @reject {Error} Optimization error
-   *
-   * @return {Promise}
-   * */
-  afterCreateDeploymentArtifacts () {
-    return this.cleanFolder()
+    this.configPlugin();
+    return this.createWarmer();
   }
 
   /**
@@ -84,10 +68,10 @@ class WarmUP {
    *
    * @return {Promise}
    * */
-  afterDeployFunctions () {
-    this.configPlugin()
+  afterDeployFunctions() {
+    this.configPlugin();
     if (this.warmup.prewarm) {
-      return this.warmUpFunctions()
+      return this.warmUpFunctions();
     }
   }
 
@@ -96,83 +80,87 @@ class WarmUP {
    *
    * @return {}
    * */
-  configPlugin () {
+  configPlugin() {
     /** Set warm up folder, file and handler paths */
-    this.folderName = '_warmup'
-    if (this.custom && this.custom.warmup && typeof this.custom.warmup.folderName === 'string') {
-      this.folderName = this.custom.warmup.folderName
+    this.folderName = "_warmup";
+    if (
+      this.custom &&
+      this.custom.warmup &&
+      typeof this.custom.warmup.folderName === "string"
+    ) {
+      this.folderName = this.custom.warmup.folderName;
     }
-    this.pathFolder = this.getPath(this.folderName)
-    this.pathFile = this.pathFolder + '/index.ts'
-    this.pathHandler = this.folderName + '/index.warmUp'
+    this.pathFolder = this.getPath(this.folderName);
+    this.pathFile = this.pathFolder + "/index.ts";
+    this.pathHandler = this.folderName + "/index.warmUp";
 
     /** Default options */
     this.warmup = {
       default: false,
-      cleanFolder: true,
       memorySize: 128,
-      name: this.serverless.service.service + '-' + this.options.stage + '-warmup-plugin',
-      schedule: ['rate(5 minutes)'],
+      name:
+        this.serverless.service.service +
+        "-" +
+        this.options.stage +
+        "-warmup-plugin",
+      schedule: ["rate(5 minutes)"],
       timeout: 10,
-      source: JSON.stringify({ source: 'serverless-plugin-warmup' }),
+      source: JSON.stringify({ source: "serverless-plugin-warmup" }),
       prewarm: false
-    }
+    };
 
     /** Set global custom options */
     if (!this.custom || !this.custom.warmup) {
-      return
+      return;
     }
 
     /** Default warmup */
-    if (typeof this.custom.warmup.default !== 'undefined') {
-      this.warmup.default = this.custom.warmup.default
-    }
-
-    /** Clean folder */
-    if (typeof this.custom.warmup.cleanFolder === 'boolean') {
-      this.warmup.cleanFolder = this.custom.warmup.cleanFolder
+    if (typeof this.custom.warmup.default !== "undefined") {
+      this.warmup.default = this.custom.warmup.default;
     }
 
     /** Memory size */
-    if (typeof this.custom.warmup.memorySize === 'number') {
-      this.warmup.memorySize = this.custom.warmup.memorySize
+    if (typeof this.custom.warmup.memorySize === "number") {
+      this.warmup.memorySize = this.custom.warmup.memorySize;
     }
 
     /** Function name */
-    if (typeof this.custom.warmup.name === 'string') {
-      this.warmup.name = this.custom.warmup.name
+    if (typeof this.custom.warmup.name === "string") {
+      this.warmup.name = this.custom.warmup.name;
     }
 
     /** Role */
-    if (typeof this.custom.warmup.role === 'string') {
-      this.warmup.role = this.custom.warmup.role
+    if (typeof this.custom.warmup.role === "string") {
+      this.warmup.role = this.custom.warmup.role;
     }
 
     /** Tags */
-    if (typeof this.custom.warmup.tags === 'object') {
-      this.warmup.tags = this.custom.warmup.tags
+    if (typeof this.custom.warmup.tags === "object") {
+      this.warmup.tags = this.custom.warmup.tags;
     }
 
     /** Schedule expression */
-    if (typeof this.custom.warmup.schedule === 'string') {
-      this.warmup.schedule = [this.custom.warmup.schedule]
+    if (typeof this.custom.warmup.schedule === "string") {
+      this.warmup.schedule = [this.custom.warmup.schedule];
     } else if (Array.isArray(this.custom.warmup.schedule)) {
-      this.warmup.schedule = this.custom.warmup.schedule
+      this.warmup.schedule = this.custom.warmup.schedule;
     }
 
     /** Timeout */
-    if (typeof this.custom.warmup.timeout === 'number') {
-      this.warmup.timeout = this.custom.warmup.timeout
+    if (typeof this.custom.warmup.timeout === "number") {
+      this.warmup.timeout = this.custom.warmup.timeout;
     }
 
     /** Source */
-    if (typeof this.custom.warmup.source !== 'undefined') {
-      this.warmup.source = this.custom.warmup.sourceRaw ? this.custom.warmup.source : JSON.stringify(this.custom.warmup.source)
+    if (typeof this.custom.warmup.source !== "undefined") {
+      this.warmup.source = this.custom.warmup.sourceRaw
+        ? this.custom.warmup.source
+        : JSON.stringify(this.custom.warmup.source);
     }
 
     /** Pre-warm */
-    if (typeof this.custom.warmup.prewarm === 'boolean') {
-      this.warmup.prewarm = this.custom.warmup.prewarm
+    if (typeof this.custom.warmup.prewarm === "boolean") {
+      this.warmup.prewarm = this.custom.warmup.prewarm;
     }
   }
 
@@ -183,67 +171,45 @@ class WarmUP {
    *
    * @return {String} Absolute file path
    * */
-  getPath (file) {
-    return path.join(this.serverless.config.servicePath, file)
-  }
-
-  /**
-   * @description Clean prefix folder
-   *
-   * @fulfil {} — Folder cleaned
-   * @reject {Error} File system error
-   *
-   * @return {Promise}
-   * */
-  cleanFolder () {
-    if (!this.warmup.cleanFolder) {
-      return Promise.resolve()
-    }
-    return fs.removeAsync(this.pathFolder)
+  getPath(file) {
+    return path.join(this.serverless.config.servicePath, file);
   }
 
   /**
    * @description Warm up functions
    *
-   * @fulfil {} — Warm up function created and added to service
-   * @reject {Error} Warm up error
-   *
    * @return {Promise}
    * */
-  createWarmer () {
-    /** Get functions */
-    const allFunctions = this.serverless.service.getAllFunctions()
+  async createWarmer() {
+    const allFunctions = this.serverless.service.getAllFunctions();
 
-    /** Filter functions for warm up */
-    return BbPromise.filter(allFunctions, (functionName) => {
-      const functionObject = this.serverless.service.getFunction(functionName)
+    const functionNames = (await Promise.all(allFunctions)).filter(
+      functionName => {
+        const functionObject = this.serverless.service.getFunction(
+          functionName
+        );
 
-      const enable = (config) => config === true ||
-        config === this.options.stage ||
-        (Array.isArray(config) && config.indexOf(this.options.stage) !== -1)
+        const enable = config =>
+          config === true ||
+          config === this.options.stage ||
+          (Array.isArray(config) && config.indexOf(this.options.stage) !== -1);
 
-      const functionConfig = functionObject.hasOwnProperty('warmup')
-        ? functionObject.warmup
-        : this.warmup.default
+        const functionConfig = functionObject.hasOwnProperty("warmup")
+          ? functionObject.warmup
+          : this.warmup.default;
 
-      /** Function needs to be warm */
-      return enable(functionConfig)
-    }).then((functionNames) => {
-      /** Skip writing if no functions need to be warm */
-      if (!functionNames.length) {
-        /** Log no warmup */
-        this.serverless.cli.log('WarmUP: no lambda to warm')
-        return true
+        return enable(functionConfig);
       }
+    );
 
-      /** Write warm up function */
-      return this.createWarmUpFunctionArtifact(functionNames)
-    }).then((skip) => {
-      /** Add warm up function to service */
-      if (skip !== true) {
-        return this.addWarmUpFunctionToService()
-      }
-    })
+    if (!functionNames.length) {
+      this.serverless.cli.log("WarmUP: no lambda to warm");
+      return true;
+    }
+
+    const skip = await this.createWarmUpFunctionArtifact(functionNames);
+
+    if (skip !== true) return this.addWarmUpFunctionToService();
   }
 
   /**
@@ -251,34 +217,33 @@ class WarmUP {
    *
    * @param {Array} functionNames - Function names
    *
-   * @fulfil {} — Warm up function created
-   * @reject {Error} Warm up error
-   *
    * @return {Promise}
    * */
-  createWarmUpFunctionArtifact (functionNames) {
-    /** Log warmup start */
-    this.serverless.cli.log('WarmUP: setting ' + functionNames.length + ' lambdas to be warm')
+  createWarmUpFunctionArtifact(functionNames) {
+    this.serverless.cli.log(
+      `WarmUP: ${functionNames.length} lambdas will be warmed`
+    );
 
-    /** Get function names */
-    functionNames = functionNames.map((functionName) => {
-      const functionObject = this.serverless.service.getFunction(functionName)
-      this.serverless.cli.log('WarmUP: ' + functionObject.name)
-      return functionObject.name
-    })
+    functionNames = functionNames.map(functionName => {
+      const functionObject = this.serverless.service.getFunction(functionName);
+      this.serverless.cli.log("WarmUP: " + functionObject.name);
+      return functionObject.name;
+    });
 
     const warmUpFunction = `"use strict";
 
 /** Generated by Serverless WarmUP Plugin at ${new Date().toISOString()} */
-const aws = require("aws-sdk");
-aws.config.region = "${this.options.region}";
+/* tslint:disable */
+import * as aws from 'aws-sdk';
 const lambda = new aws.Lambda();
 const functionNames = ${JSON.stringify(functionNames)};
 module.exports.warmUp = async () => {
   console.log("Warm Up Start");
   const invokes = await Promise.all(functionNames.map(async (functionName) => {
     const params = {
-      ClientContext: "${Buffer.from(`{"custom":${this.warmup.source}}`).toString('base64')}",
+      ClientContext: "${Buffer.from(
+        `{"custom":${this.warmup.source}}`
+      ).toString("base64")}",
       FunctionName: functionName,
       InvocationType: "RequestResponse",
       LogType: "None",
@@ -297,10 +262,11 @@ module.exports.warmUp = async () => {
   }));
 
   console.log(\`Warm Up Finished with \${invokes.filter(r => !r).length} invoke errors\`);
-}`
+}
+/* tslint:enable */
+`;
 
-    /** Write warm up file */
-    return fs.outputFileAsync(this.pathFile, warmUpFunction)
+    return writeFile(this.pathFile, warmUpFunction);
   }
 
   /**
@@ -308,59 +274,59 @@ module.exports.warmUp = async () => {
    *
    * @return {Object} Warm up service function object
    * */
-  addWarmUpFunctionToService () {
+  addWarmUpFunctionToService() {
     /** SLS warm up function */
     this.serverless.service.functions.warmUpPlugin = {
-      description: 'Serverless WarmUP Plugin',
+      description: "Serverless WarmUP Plugin",
       events: this.warmup.schedule.map(schedule => ({ schedule })),
       handler: this.pathHandler,
       memorySize: this.warmup.memorySize,
       name: this.warmup.name,
-      runtime: 'nodejs8.10',
+      runtime: "nodejs8.10",
       package: {
-        individually: true,
-        exclude: ['**'],
-        include: [this.folderName + '/**']
+        exclude: ["**"],
+        include: [this.folderName + "/**"]
       },
       timeout: this.warmup.timeout
-    }
+    };
 
     if (this.warmup.role) {
-      this.serverless.service.functions.warmUpPlugin.role = this.warmup.role
+      this.serverless.service.functions.warmUpPlugin.role = this.warmup.role;
     }
 
     if (this.warmup.tags) {
-      this.serverless.service.functions.warmUpPlugin.tags = this.warmup.tags
+      this.serverless.service.functions.warmUpPlugin.tags = this.warmup.tags;
     }
 
-    /** Return service function object */
-    return this.serverless.service.functions.warmUpPlugin
+    return this.serverless.service.functions.warmUpPlugin;
   }
 
   /**
    * @description Warm up the functions immediately after deployment
    *
-   * @fulfil {} — Functions warmed up sucessfuly
-   * @reject {Error} Functions couldn't be warmed up
-   *
    * @return {Promise}
    * */
-  warmUpFunctions () {
-    this.serverless.cli.log('WarmUP: Pre-warming up your functions')
+  async warmUpFunctions() {
+    this.serverless.cli.log("WarmUP: Pre-warming up your functions");
 
     const params = {
       FunctionName: this.warmup.name,
-      InvocationType: 'RequestResponse',
-      LogType: 'None',
-      Qualifier: process.env.SERVERLESS_ALIAS || '$LATEST',
+      InvocationType: "RequestResponse",
+      LogType: "None",
+      Qualifier: process.env.SERVERLESS_ALIAS || "$LATEST",
       Payload: this.warmup.source
-    }
+    };
 
-    return this.provider.request('Lambda', 'invoke', params)
-      .then(data => this.serverless.cli.log('WarmUp: Functions sucessfuly pre-warmed'))
-      .catch(error => this.serverless.cli.log('WarmUp: Error while pre-warming functions', error))
+    try {
+      await this.provider.request("Lambda", "invoke", params);
+      this.serverless.cli.log("WarmUp: Functions sucessfuly pre-warmed");
+    } catch (error) {
+      this.serverless.cli.log(
+        "WarmUp: Error while pre-warming functions",
+        error
+      );
+    }
   }
 }
 
-/** Export WarmUP class */
-module.exports = WarmUP
+module.exports = WarmUP;
